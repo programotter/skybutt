@@ -141,7 +141,7 @@ namespace skybutt
                 var device = client.Devices.First(dev => dev.Index == deviceChoice);
 
                 Console.WriteLine("Watching Controller Rumble log file");
-                watchLogFileAsync(logFile, device);
+                await WatchLogFileAsync(logFile, device);
 
                 //// Now that we've gotten a device, we need to choose an action
                 //// for that device to take. For sake of simplicity, right now
@@ -277,7 +277,7 @@ namespace skybutt
             // Mission Accomplished.
         }
 
-        static Task watchLogFileAsync(string filename, ButtplugClientDevice device)
+        static async Task WatchLogFileAsync(string filename, ButtplugClientDevice device)
         {
             var wh = new AutoResetEvent(false);
             var fsw = new FileSystemWatcher(".");
@@ -292,20 +292,26 @@ namespace skybutt
                 while (true)
                 {
                     s = sr.ReadLine();
-                    if (s != null)
+                    if (s != null && (s.Contains("JNVaginal") || s.Contains("JNAnal")))
                     {
-                        Option<VibrateLine> vl = parseVibrateLine(s);
-                        Console.WriteLine("[RumbleLog] " + vl);
-                        //try
-                        //{
-                        //    await device.SendVibrateCmd(0.5);
-                        //    await Task.Delay(1000);
-                        //    await device.SendVibrateCmd(0);
-                        //}
-                        //catch (ButtplugDeviceException)
-                        //{
-                        //    Console.WriteLine("Device disconnected. Please try another device.");
-                        //}
+                        Either<Exception, VibrateLine> vlOrE = ParseVibrateLine(s);
+                        Console.WriteLine("[RumbleLog] " + vlOrE);
+                        await vlOrE.Match(async vl =>
+                        {
+                            try
+                            {
+                                await device.SendVibrateCmd(vl.strength);
+                                await vl.time.IfSomeAsync(async time =>
+                                {
+                                    await Task.Delay(time);
+                                    await device.SendVibrateCmd(0);
+                                });
+                            }
+                            catch (ButtplugDeviceException)
+                            {
+                                Console.WriteLine("Device disconnected. Please try another device.");
+                            }
+                        }, async e => Console.WriteLine(e));
                     }
                     else
                     {
@@ -318,9 +324,9 @@ namespace skybutt
             //wh.Close();
         }
 
-        static Option<VibrateLine> parseVibrateLine(string s)
+        static Either<Exception, VibrateLine> ParseVibrateLine(string s)
         {
-            Arr<string> parts = new Arr<string>(s.Split(' ')).Filter(s_ => s_.Contains("="));
+            Arr<string> parts = new Arr<string>(s.ToLower().Split(' ').Filter(s_ => s_.Contains("=")));
             Map<string, string> dict = new Map<string, string>(parts.Map(p =>
                 {
                     string[] pp = p.Split('=');
@@ -328,24 +334,26 @@ namespace skybutt
                 }));
             try
             {
-                return Some(new VibrateLine(dict["Type"], Double.Parse(dict["Time"]), Double.Parse(dict["Strength"])));
+                double time = Double.Parse(dict.ContainsKey("time") ? dict["time"] : dict["interval"]);
+                return Right(new VibrateLine(dict["type"], time, Double.Parse(dict["strength"])));
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                return None;
+                return Left(e);
             }
         }
         struct VibrateLine
         {
-            string type;
-            double time;
-            double strength;
+            private const double StrengthFactor = 100;
+            public string type;
+            public Option<TimeSpan> time;
+            public double strength;
 
             public VibrateLine(string type, double time, double strength)
             {
                 this.type = type;
-                this.time = time;
-                this.strength = strength;
+                this.time =  time == -1 ? None : Some(TimeSpan.FromSeconds(time));
+                this.strength = strength / StrengthFactor;
             }
 
             public override string ToString()
