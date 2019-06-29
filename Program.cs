@@ -142,100 +142,6 @@ namespace skybutt
 
                 Console.WriteLine("Watching Controller Rumble log file");
                 await WatchLogFileAsync(logFile, device);
-
-                //// Now that we've gotten a device, we need to choose an action
-                //// for that device to take. For sake of simplicity, right now
-                //// we'll just use the 3 generic commands available:
-                ////
-                //// - Vibrate
-                //// - Rotate
-                //// - Linear (stroke/oscillate)
-                ////
-                //// Each device supported by the Buttplug C# library supports at
-                //// least one of these 3 commands, so we know that the user will
-                //// always have some option.
-                //var commandTypes = device.AllowedMessages.Keys.Intersect(new[]
-                //{
-                //    typeof(VibrateCmd), typeof(RotateCmd), typeof(LinearCmd)
-                //}).ToArray();
-
-                //Console.WriteLine("Choose an action:");
-                //uint i = 1;
-                //foreach (var command in commandTypes)
-                //{
-                //    // We know all device commands end in "Cmd", so we can cut
-                //    // off the last 3 characters and just have the action shown
-                //    // in our interface. Handy, if hacky.
-                //    Console.WriteLine($"{i}. {command.Name.Substring(0, command.Name.Length - 3)}");
-                //    ++i;
-                //}
-                //if (!uint.TryParse(Console.ReadLine(), out var cmdChoice) ||
-                //    cmdChoice - 1 > commandTypes.Length)
-                //{
-                //    Console.WriteLine("Invalid choice, try again.");
-                //    return;
-                //}
-
-                //// We've got a device, and a command to take on that device.
-                //// Let's do this thing. For each command we'll either run at a
-                //// speed, then stop, or move to a position, then back again. To
-                //// ensure that we don't have to deal with concurrent commands
-                //// (again, for sake of example simplicity, real world situations
-                //// are gonna be far more dynamic than this), we'll just block
-                //// while this action is happening.
-                ////
-                //// We'll wrap each of our commands in a ButtplugDeviceException
-                //// try block, as a device might be disconnected between the time
-                //// we enter the command menu and send the command, and we don't
-                //// want to crash when that happens.
-                //var cmdType = commandTypes[cmdChoice - 1];
-
-                //// Pattern matching for switch blocks doesn't seem to work here. :(
-                //if (cmdType == typeof(VibrateCmd))
-                //{
-                //    Console.WriteLine($"Vibrating all motors of {device.Name} at 50% for 1s.");
-                //    try
-                //    {
-                //        await device.SendVibrateCmd(0.5);
-                //        await Task.Delay(1000);
-                //        await device.SendVibrateCmd(0);
-                //    }
-                //    catch (ButtplugDeviceException)
-                //    {
-                //        Console.WriteLine("Device disconnected. Please try another device.");
-                //    }
-                //}
-                //else if (cmdType == typeof(RotateCmd))
-                //{
-                //    Console.WriteLine($"Rotating {device.Name} at 50% for 1s.");
-                //    try
-                //    {
-                //        await device.SendRotateCmd(0.5, true);
-                //        await Task.Delay(1000);
-                //        await device.SendRotateCmd(0, true);
-                //    }
-                //    catch (ButtplugDeviceException)
-                //    {
-                //        Console.WriteLine("Device disconnected. Please try another device.");
-                //    }
-                //}
-                //else if (cmdType == typeof(LinearCmd))
-                //{
-                //    Console.WriteLine($"Oscillating linear motors of {device.Name} from 20% to 80% over 3s");
-                //    try
-                //    {
-                //        await device.SendLinearCmd(1000, 0.2);
-                //        await Task.Delay(1100);
-                //        await device.SendLinearCmd(1000, 0.8);
-                //        await Task.Delay(1100);
-                //        await device.SendLinearCmd(1000, 0.2);
-                //        await Task.Delay(1100);
-                //    }
-                //    catch (ButtplugDeviceException)
-                //    {
-                //        Console.WriteLine("Device disconnected. Please try another device.");
-                //    }
-                //}
             }
 
             // And finally, we arrive at the main menu. We give the user the
@@ -268,13 +174,6 @@ namespace skybutt
                         continue;
                 }
             }
-
-            // That's it! A full buttplug program. It doesn't do much, but with
-            // the right toys, the right commands, and a user that doesn't
-            // possibly mind getting lube on their keyboard, this program could
-            // possibly get someone off.
-            //
-            // Mission Accomplished.
         }
 
         static async Task WatchLogFileAsync(string filename, ButtplugClientDevice device)
@@ -286,12 +185,18 @@ namespace skybutt
             fsw.Changed += (s, e) => wh.Set();
 
             var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            fs.Seek(0, SeekOrigin.End);
+
+            // Watch the file
             using (var sr = new StreamReader(fs))
             {
-                var s = "";
                 while (true)
                 {
-                    s = sr.ReadLine();
+                    // Reset position for new file
+                    if (fs.Position > fs.Length)
+                        fs.Seek(0, SeekOrigin.Begin);
+
+                    string s = sr.ReadLine();
                     if (s != null && (s.Contains("JNVaginal") || s.Contains("JNAnal")))
                     {
                         Either<Exception, VibrateLine> vlOrE = ParseVibrateLine(s);
@@ -315,7 +220,7 @@ namespace skybutt
                     }
                     else
                     {
-                        wh.WaitOne(50);
+                        wh.WaitOne(10);
                     }
                 }
             }
