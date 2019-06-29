@@ -2,10 +2,14 @@
 using Buttplug.Core;
 using Buttplug.Core.Messages;
 using Buttplug.Client.Connectors.WebsocketConnector;
+using LanguageExt;
+using static LanguageExt.Prelude;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
+using System.IO;
 
 namespace skybutt
 {
@@ -21,7 +25,7 @@ namespace skybutt
             Console.ReadKey(true);
         }
 
-        private static async Task RunExample()
+        private static async Task RunExample(string logFile)
         {
             // Now that we've seen all of the different parts of Buttplug, let's
             // put them together in a small program.
@@ -136,99 +140,102 @@ namespace skybutt
 
                 var device = client.Devices.First(dev => dev.Index == deviceChoice);
 
-                // Now that we've gotten a device, we need to choose an action
-                // for that device to take. For sake of simplicity, right now
-                // we'll just use the 3 generic commands available:
-                //
-                // - Vibrate
-                // - Rotate
-                // - Linear (stroke/oscillate)
-                //
-                // Each device supported by the Buttplug C# library supports at
-                // least one of these 3 commands, so we know that the user will
-                // always have some option.
-                var commandTypes = device.AllowedMessages.Keys.Intersect(new[]
-                {
-                    typeof(VibrateCmd), typeof(RotateCmd), typeof(LinearCmd)
-                }).ToArray();
+                Console.WriteLine("Watching Controller Rumble log file");
+                watchLogFileAsync(logFile, device);
 
-                Console.WriteLine("Choose an action:");
-                uint i = 1;
-                foreach (var command in commandTypes)
-                {
-                    // We know all device commands end in "Cmd", so we can cut
-                    // off the last 3 characters and just have the action shown
-                    // in our interface. Handy, if hacky.
-                    Console.WriteLine($"{i}. {command.Name.Substring(0, command.Name.Length - 3)}");
-                    ++i;
-                }
-                if (!uint.TryParse(Console.ReadLine(), out var cmdChoice) ||
-                    cmdChoice - 1 > commandTypes.Length)
-                {
-                    Console.WriteLine("Invalid choice, try again.");
-                    return;
-                }
+                //// Now that we've gotten a device, we need to choose an action
+                //// for that device to take. For sake of simplicity, right now
+                //// we'll just use the 3 generic commands available:
+                ////
+                //// - Vibrate
+                //// - Rotate
+                //// - Linear (stroke/oscillate)
+                ////
+                //// Each device supported by the Buttplug C# library supports at
+                //// least one of these 3 commands, so we know that the user will
+                //// always have some option.
+                //var commandTypes = device.AllowedMessages.Keys.Intersect(new[]
+                //{
+                //    typeof(VibrateCmd), typeof(RotateCmd), typeof(LinearCmd)
+                //}).ToArray();
 
-                // We've got a device, and a command to take on that device.
-                // Let's do this thing. For each command we'll either run at a
-                // speed, then stop, or move to a position, then back again. To
-                // ensure that we don't have to deal with concurrent commands
-                // (again, for sake of example simplicity, real world situations
-                // are gonna be far more dynamic than this), we'll just block
-                // while this action is happening.
-                //
-                // We'll wrap each of our commands in a ButtplugDeviceException
-                // try block, as a device might be disconnected between the time
-                // we enter the command menu and send the command, and we don't
-                // want to crash when that happens.
-                var cmdType = commandTypes[cmdChoice - 1];
+                //Console.WriteLine("Choose an action:");
+                //uint i = 1;
+                //foreach (var command in commandTypes)
+                //{
+                //    // We know all device commands end in "Cmd", so we can cut
+                //    // off the last 3 characters and just have the action shown
+                //    // in our interface. Handy, if hacky.
+                //    Console.WriteLine($"{i}. {command.Name.Substring(0, command.Name.Length - 3)}");
+                //    ++i;
+                //}
+                //if (!uint.TryParse(Console.ReadLine(), out var cmdChoice) ||
+                //    cmdChoice - 1 > commandTypes.Length)
+                //{
+                //    Console.WriteLine("Invalid choice, try again.");
+                //    return;
+                //}
 
-                // Pattern matching for switch blocks doesn't seem to work here. :(
-                if (cmdType == typeof(VibrateCmd))
-                {
-                    Console.WriteLine($"Vibrating all motors of {device.Name} at 50% for 1s.");
-                    try
-                    {
-                        await device.SendVibrateCmd(0.5);
-                        await Task.Delay(1000);
-                        await device.SendVibrateCmd(0);
-                    }
-                    catch (ButtplugDeviceException)
-                    {
-                        Console.WriteLine("Device disconnected. Please try another device.");
-                    }
-                }
-                else if (cmdType == typeof(RotateCmd))
-                {
-                    Console.WriteLine($"Rotating {device.Name} at 50% for 1s.");
-                    try
-                    {
-                        await device.SendRotateCmd(0.5, true);
-                        await Task.Delay(1000);
-                        await device.SendRotateCmd(0, true);
-                    }
-                    catch (ButtplugDeviceException)
-                    {
-                        Console.WriteLine("Device disconnected. Please try another device.");
-                    }
-                }
-                else if (cmdType == typeof(LinearCmd))
-                {
-                    Console.WriteLine($"Oscillating linear motors of {device.Name} from 20% to 80% over 3s");
-                    try
-                    {
-                        await device.SendLinearCmd(1000, 0.2);
-                        await Task.Delay(1100);
-                        await device.SendLinearCmd(1000, 0.8);
-                        await Task.Delay(1100);
-                        await device.SendLinearCmd(1000, 0.2);
-                        await Task.Delay(1100);
-                    }
-                    catch (ButtplugDeviceException)
-                    {
-                        Console.WriteLine("Device disconnected. Please try another device.");
-                    }
-                }
+                //// We've got a device, and a command to take on that device.
+                //// Let's do this thing. For each command we'll either run at a
+                //// speed, then stop, or move to a position, then back again. To
+                //// ensure that we don't have to deal with concurrent commands
+                //// (again, for sake of example simplicity, real world situations
+                //// are gonna be far more dynamic than this), we'll just block
+                //// while this action is happening.
+                ////
+                //// We'll wrap each of our commands in a ButtplugDeviceException
+                //// try block, as a device might be disconnected between the time
+                //// we enter the command menu and send the command, and we don't
+                //// want to crash when that happens.
+                //var cmdType = commandTypes[cmdChoice - 1];
+
+                //// Pattern matching for switch blocks doesn't seem to work here. :(
+                //if (cmdType == typeof(VibrateCmd))
+                //{
+                //    Console.WriteLine($"Vibrating all motors of {device.Name} at 50% for 1s.");
+                //    try
+                //    {
+                //        await device.SendVibrateCmd(0.5);
+                //        await Task.Delay(1000);
+                //        await device.SendVibrateCmd(0);
+                //    }
+                //    catch (ButtplugDeviceException)
+                //    {
+                //        Console.WriteLine("Device disconnected. Please try another device.");
+                //    }
+                //}
+                //else if (cmdType == typeof(RotateCmd))
+                //{
+                //    Console.WriteLine($"Rotating {device.Name} at 50% for 1s.");
+                //    try
+                //    {
+                //        await device.SendRotateCmd(0.5, true);
+                //        await Task.Delay(1000);
+                //        await device.SendRotateCmd(0, true);
+                //    }
+                //    catch (ButtplugDeviceException)
+                //    {
+                //        Console.WriteLine("Device disconnected. Please try another device.");
+                //    }
+                //}
+                //else if (cmdType == typeof(LinearCmd))
+                //{
+                //    Console.WriteLine($"Oscillating linear motors of {device.Name} from 20% to 80% over 3s");
+                //    try
+                //    {
+                //        await device.SendLinearCmd(1000, 0.2);
+                //        await Task.Delay(1100);
+                //        await device.SendLinearCmd(1000, 0.8);
+                //        await Task.Delay(1100);
+                //        await device.SendLinearCmd(1000, 0.2);
+                //        await Task.Delay(1100);
+                //    }
+                //    catch (ButtplugDeviceException)
+                //    {
+                //        Console.WriteLine("Device disconnected. Please try another device.");
+                //    }
+                //}
             }
 
             // And finally, we arrive at the main menu. We give the user the
@@ -270,13 +277,92 @@ namespace skybutt
             // Mission Accomplished.
         }
 
+        static Task watchLogFileAsync(string filename, ButtplugClientDevice device)
+        {
+            var wh = new AutoResetEvent(false);
+            var fsw = new FileSystemWatcher(".");
+            fsw.Filter = filename;
+            fsw.EnableRaisingEvents = true;
+            fsw.Changed += (s, e) => wh.Set();
+
+            var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using (var sr = new StreamReader(fs))
+            {
+                var s = "";
+                while (true)
+                {
+                    s = sr.ReadLine();
+                    if (s != null)
+                    {
+                        Option<VibrateLine> vl = parseVibrateLine(s);
+                        Console.WriteLine("[RumbleLog] " + vl);
+                        //try
+                        //{
+                        //    await device.SendVibrateCmd(0.5);
+                        //    await Task.Delay(1000);
+                        //    await device.SendVibrateCmd(0);
+                        //}
+                        //catch (ButtplugDeviceException)
+                        //{
+                        //    Console.WriteLine("Device disconnected. Please try another device.");
+                        //}
+                    }
+                    else
+                    {
+                        wh.WaitOne(50);
+                    }
+                }
+            }
+
+            // TODO end loop
+            //wh.Close();
+        }
+
+        static Option<VibrateLine> parseVibrateLine(string s)
+        {
+            Arr<string> parts = new Arr<string>(s.Split(' ')).Filter(s_ => s_.Contains("="));
+            Map<string, string> dict = new Map<string, string>(parts.Map(p =>
+                {
+                    string[] pp = p.Split('=');
+                    return (pp.First(), pp.Last());
+                }));
+            try
+            {
+                return Some(new VibrateLine(dict["Type"], Double.Parse(dict["Time"]), Double.Parse(dict["Strength"])));
+            }
+            catch (Exception)
+            {
+                return None;
+            }
+        }
+        struct VibrateLine
+        {
+            string type;
+            double time;
+            double strength;
+
+            public VibrateLine(string type, double time, double strength)
+            {
+                this.type = type;
+                this.time = time;
+                this.strength = strength;
+            }
+
+            public override string ToString()
+            {
+                return "type: " + type + ", time: " + time + ", strength: " + strength;
+            }
+        }
+
         // Since not everyone is probably going to want to run under C# 7.1+,
         // we'll use a non-async Main and call to a Wait()'d task. C# 8 can't
         // come soon enough.
         private static void Main()
         {
+            string logFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "My Games", "Skyrim", "Logs", "Script", "User", "Controller Rumble.0.log");
             // Setup a client, and wait until everything is done before exiting.
-            RunExample().Wait();
+            RunExample(logFile).Wait();
         }
     }
 }
