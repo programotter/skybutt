@@ -199,18 +199,20 @@ namespace skybutt
                     string s = sr.ReadLine();
                     if (s != null && (s.Contains("JNVaginal") || s.Contains("JNAnal")))
                     {
-                        Either<Exception, VibrateLine> vlOrE = ParseVibrateLine(s);
+                        Either<Exception, VibrateCommand> vlOrE = ParseVibrateLine(s);
                         Console.WriteLine("[RumbleLog] " + vlOrE);
                         await vlOrE.Match(async vl =>
                         {
                             try
                             {
-                                await device.SendVibrateCmd(vl.strength);
-                                await vl.time.IfSomeAsync(async time =>
+                                if (vl is VibrateStart)
                                 {
-                                    await Task.Delay(time);
+                                    await HandleVibrateStart(device, vl as VibrateStart);
+                                }
+                                else if (vl is VibrateStop)
+                                {
                                     await device.SendVibrateCmd(0);
-                                });
+                                }
                             }
                             catch (ButtplugDeviceException)
                             {
@@ -229,43 +231,70 @@ namespace skybutt
             //wh.Close();
         }
 
-        static Either<Exception, VibrateLine> ParseVibrateLine(string s)
+        private static async Task HandleVibrateStart(ButtplugClientDevice device, VibrateStart vs)
         {
-            Arr<string> parts = new Arr<string>(s.ToLower().Split(' ').Filter(s_ => s_.Contains("=")));
-            Map<string, string> dict = new Map<string, string>(parts.Map(p =>
+            await device.SendVibrateCmd(vs.strength);
+            // TODO handle intervals
+            await vs.time.IfSomeAsync(async time =>
                 {
-                    string[] pp = p.Split('=');
-                    return (pp.First(), pp.Last());
-                }));
-            try
-            {
-                double time = Double.Parse(dict.ContainsKey("time") ? dict["time"] : dict["interval"]);
-                return Right(new VibrateLine(dict["type"], time, Double.Parse(dict["strength"])));
-            }
-            catch (Exception e)
-            {
-                return Left(e);
-            }
+                    await Task.Delay(time);
+                    await device.SendVibrateCmd(0);
+                });
         }
-        struct VibrateLine
+
+        static Either<Exception, VibrateCommand> ParseVibrateLine(string s)
+        {
+            Arr<string> parts = new Arr<string>(s.ToLower().Split(' '));
+            if (parts.Contains("start"))
+            {
+                Map<string, string> dict = new Map<string, string>(parts.Filter(s_ => s_.Contains("=")).Map(p =>
+                    {
+                        string[] pp = p.Split('=');
+                        return (pp.First(), pp.Last());
+                    }));
+                try
+                {
+                    return Right<VibrateCommand>(new VibrateStart(
+                        dict["type"], dict.Find("time").Map(Double.Parse), dict.Find("interval").Map(Double.Parse), Double.Parse(dict["strength"])));
+                }
+                catch (Exception e)
+                {
+                    return Left(e);
+                }
+            }
+            else if (parts.Contains("stop"))
+                return Right<VibrateCommand>(new VibrateStop());
+            else
+                return Right<VibrateCommand>(new VibrateNone());
+        }
+
+        interface VibrateCommand {}
+
+        class VibrateStart : VibrateCommand
         {
             private const double StrengthFactor = 100;
             public string type;
             public Option<TimeSpan> time;
+            public Option<TimeSpan> interval;
             public double strength;
 
-            public VibrateLine(string type, double time, double strength)
+            public VibrateStart(string type, Option<double> time, Option<double> interval, double strength)
             {
                 this.type = type;
-                this.time =  time == -1 ? None : Some(TimeSpan.FromSeconds(time));
+                this.time =  time.Bind(t => t == -1 ? None : Some(TimeSpan.FromSeconds(t)));
+                this.interval = interval.Bind(t => t == -1 ? None : Some(TimeSpan.FromSeconds(t)));
                 this.strength = strength / StrengthFactor;
             }
 
             public override string ToString()
             {
-                return "type: " + type + ", time: " + time + ", strength: " + strength;
+                return "VibrateStart(type: " + type + ", time: " + time + ", strength: " + strength + ")";
             }
         }
+
+        class VibrateStop : VibrateCommand {}
+
+        class VibrateNone : VibrateCommand {}
 
         // Since not everyone is probably going to want to run under C# 7.1+,
         // we'll use a non-async Main and call to a Wait()'d task. C# 8 can't
