@@ -188,6 +188,7 @@ namespace skybutt
             fs.Seek(0, SeekOrigin.End);
 
             // Watch the file
+            double currentSetting = 0;
             using (var sr = new StreamReader(fs))
             {
                 while (true)
@@ -207,11 +208,12 @@ namespace skybutt
                             {
                                 if (vl is VibrateStart)
                                 {
-                                    await HandleVibrateStart(device, vl as VibrateStart);
+                                    currentSetting = await HandleVibrateStart(device, vl as VibrateStart, currentSetting);
                                 }
                                 else if (vl is VibrateStop)
                                 {
                                     await device.SendVibrateCmd(0);
+                                    currentSetting = 0;
                                 }
                             }
                             catch (ButtplugDeviceException)
@@ -231,15 +233,16 @@ namespace skybutt
             //wh.Close();
         }
 
-        private static async Task HandleVibrateStart(ButtplugClientDevice device, VibrateStart vs)
+        private static async Task<double> HandleVibrateStart(ButtplugClientDevice device, VibrateStart vs, double currentSetting)
         {
             await device.SendVibrateCmd(vs.strength);
             // TODO handle intervals
-            await vs.time.IfSomeAsync(async time =>
+            return await vs.time.MatchAsync(async time =>
                 {
                     await Task.Delay(time);
-                    await device.SendVibrateCmd(0);
-                });
+                    await device.SendVibrateCmd(currentSetting);
+                    return currentSetting;
+                }, () => vs.strength);
         }
 
         static Either<Exception, VibrateCommand> ParseVibrateLine(string s)
