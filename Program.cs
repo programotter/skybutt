@@ -130,18 +130,25 @@ namespace skybutt
                     Console.WriteLine($"{dev.Index}. {dev.Name}");
                     options.Add(dev.Index);
                 }
-                Console.WriteLine("Choose a device: ");
-                if (!uint.TryParse(Console.ReadLine(), out var deviceChoice) ||
-                    !options.Contains(deviceChoice))
+                uint deviceChoice;
+                if (options.Length() == 1)
                 {
-                    Console.WriteLine("Invalid choice");
-                    return;
+                    deviceChoice = client.Devices.Head().Index;
+                } else
+                {
+                    Console.WriteLine("Choose a device: ");
+                    if (!uint.TryParse(Console.ReadLine(), out deviceChoice) ||
+                        !options.Contains(deviceChoice))
+                    {
+                        Console.WriteLine("Invalid choice");
+                        return;
+                    }
                 }
 
                 var device = client.Devices.First(dev => dev.Index == deviceChoice);
 
                 Console.WriteLine("Watching Controller Rumble log file");
-                await WatchLogFileAsync(logFile, device);
+                await WatchLogFileAsync(logFile, client, device);
             }
 
             // And finally, we arrive at the main menu. We give the user the
@@ -176,7 +183,22 @@ namespace skybutt
             }
         }
 
-        static async Task WatchLogFileAsync(string filename, ButtplugClientDevice device)
+        static async Task<ButtplugClientDevice> AttemptReconnect(ButtplugClient client, ButtplugClientDevice device)
+        {
+            Console.WriteLine("Attempting to reconnect device " + device.Name);
+            var wh = new EventWaitHandle(false, EventResetMode.ManualReset);
+            client.ScanningFinished += (s, e) => wh.Set();
+            await client.StartScanningAsync();
+            wh.WaitOne();
+            var deviceOption = client.Devices.Find(d => d.Name == device.Name);
+            return await deviceOption.Match((ButtplugClientDevice d) => Task.FromResult(d), async () =>
+                {
+                    await Task.Delay(500);
+                    return await AttemptReconnect(client, device);
+                });
+        }
+
+        static async Task WatchLogFileAsync(string filename, ButtplugClient client, ButtplugClientDevice device)
         {
             var wh = new AutoResetEvent(false);
             var fsw = new FileSystemWatcher(".");
@@ -218,7 +240,8 @@ namespace skybutt
                             }
                             catch (ButtplugDeviceException)
                             {
-                                Console.WriteLine("Device disconnected. Please try another device.");
+                                Console.WriteLine("Device disconnected.");
+                                device = await AttemptReconnect(client, device);
                             }
                         }, async e => Console.WriteLine(e));
                     }
