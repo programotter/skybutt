@@ -151,14 +151,58 @@ namespace skybutt
                 await WatchLogFileAsync(logFile, client, device);
             }
 
+            async Task ControlDeviceRandom()
+            {
+                // Controlling a device has 2 steps: selecting the device to
+                // control, and choosing which command to send. We'll just list
+                // the devices the client has available, then search the device
+                // message capabilities once that's done to figure out what we
+                // can send. Note that this is using the Device Index, which is
+                // assigned by the device manager and may not be sequential
+                // (which is why we can't just use an array index).
+
+                // Of course, if we don't have any devices yet, that's not gonna work.
+                if (!client.Devices.Any())
+                {
+                    Console.WriteLine("No devices available. Please scan for a device.");
+                    return;
+                }
+
+                var options = new List<uint>();
+
+                foreach (var dev in client.Devices)
+                {
+                    Console.WriteLine($"{dev.Index}. {dev.Name}");
+                    options.Add(dev.Index);
+                }
+                uint deviceChoice;
+                if (options.Length() == 1)
+                {
+                    deviceChoice = client.Devices.Head().Index;
+                } else
+                {
+                    Console.WriteLine("Choose a device: ");
+                    if (!uint.TryParse(Console.ReadLine(), out deviceChoice) ||
+                        !options.Contains(deviceChoice))
+                    {
+                        Console.WriteLine("Invalid choice");
+                        return;
+                    }
+                }
+
+                var device = client.Devices.First(dev => dev.Index == deviceChoice);
+
+                await RunRandom(client, device);
+            }
+
             // And finally, we arrive at the main menu. We give the user the
             // choice to scan for more devices (in case they forgot to turn them
             // on earlier or whatever), run a command on a device, or just quit.
             while (true)
             {
-                Console.WriteLine("1. Scan For More Devices\n2. Control Devices\n3. Quit\nChoose an option: ");
+                Console.WriteLine("1. Scan For More Devices\n2. Run Skyrim vibrator\n3. Randomly vibrate\n4. Quit\nChoose an option: ");
                 if (!uint.TryParse(Console.ReadLine(), out var choice) ||
-                    (choice == 0 || choice > 3))
+                    (choice == 0 || choice > 4))
                 {
                     Console.WriteLine("Invalid choice, try again.");
                     continue;
@@ -173,27 +217,49 @@ namespace skybutt
                         await ControlDevice();
                         continue;
                     case 3:
+                        await ControlDeviceRandom();
+                        continue;
+                    case 4:
                         return;
 
                     default:
-
                         // Due to the check above, we'll never hit this, but eh.
                         continue;
                 }
             }
         }
 
+        static async Task RunRandom(ButtplugClient client, ButtplugClientDevice device)
+        {
+            var rnd = new Random();
+            while (true)
+            {
+                var delay = rnd.NextDouble() * 0.5 + rnd.NextDouble() * rnd.NextDouble();
+                try
+                {
+                    await device.SendVibrateCmd(rnd.NextDouble());
+                }
+                catch (ButtplugDeviceException)
+                {
+                    Console.WriteLine("Device disconnected.");
+                    device = await AttemptReconnect(client, device);
+                }
+                await Task.Delay(TimeSpan.FromSeconds(delay));
+            }
+        }
+
         static async Task<ButtplugClientDevice> AttemptReconnect(ButtplugClient client, ButtplugClientDevice device)
         {
-            Console.WriteLine("Attempting to reconnect device " + device.Name);
-            var wh = new EventWaitHandle(false, EventResetMode.ManualReset);
-            client.ScanningFinished += (s, e) => wh.Set();
+            Console.WriteLine("Attempting to reconnect device" + device.Name);
             await client.StartScanningAsync();
-            wh.WaitOne();
-            var deviceOption = client.Devices.Find(d => d.Name == device.Name);
-            return await deviceOption.Match((ButtplugClientDevice d) => Task.FromResult(d), async () =>
+            await Task.Delay(500);
+            var deviceOption = client.Devices.Find(d => d.Name.Equals(device.Name));
+            return await deviceOption.Match((ButtplugClientDevice d) => 
                 {
-                    await Task.Delay(500);
+                    client.StopScanningAsync();
+                    return Task.FromResult(d);
+                }, async () =>
+                {
                     return await AttemptReconnect(client, device);
                 });
         }
