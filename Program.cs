@@ -252,6 +252,11 @@ namespace skybutt
         {
             Console.WriteLine("Attempting to reconnect device" + device.Name);
             await client.StartScanningAsync();
+            return await _AttemptReconnect(client, device);
+        }
+
+        static async Task<ButtplugClientDevice> _AttemptReconnect(ButtplugClient client, ButtplugClientDevice device)
+        {
             await Task.Delay(500);
             var deviceOption = client.Devices.Find(d => d.Name.Equals(device.Name));
             return await deviceOption.Match((ButtplugClientDevice d) => 
@@ -260,7 +265,7 @@ namespace skybutt
                     return Task.FromResult(d);
                 }, async () =>
                 {
-                    return await AttemptReconnect(client, device);
+                    return await _AttemptReconnect(client, device);
                 });
         }
 
@@ -307,6 +312,11 @@ namespace skybutt
                             catch (ButtplugDeviceException)
                             {
                                 Console.WriteLine("Device disconnected.");
+                                device = await AttemptReconnect(client, device);
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine("Unknown exception, attempting reconnect anyway. Exception: " + e);
                                 device = await AttemptReconnect(client, device);
                             }
                         }, async e => Console.WriteLine(e));
