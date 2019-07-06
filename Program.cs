@@ -244,6 +244,11 @@ namespace skybutt
                     Console.WriteLine("Device disconnected.");
                     device = await AttemptReconnect(client, device);
                 }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Unknown exception, attempting reconnect anyway. Exception: " + e);
+                    device = await AttemptReconnect(client, device);
+                }
                 await Task.Delay(TimeSpan.FromSeconds(delay));
             }
         }
