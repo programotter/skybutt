@@ -147,6 +147,10 @@ namespace skybutt
 
                 var device = client.Devices.First(dev => dev.Index == deviceChoice);
 
+                foreach (var m in device.AllowedMessages)
+                {
+                    Console.WriteLine($"Device message: {m.Key} -> {m.Value}");
+                }
                 Console.WriteLine("Watching Controller Rumble log file");
                 await WatchLogFileAsync(logFile, client, device);
             }
@@ -237,11 +241,17 @@ namespace skybutt
                 var delay = rnd.NextDouble() * 0.5 + rnd.NextDouble() * rnd.NextDouble();
                 try
                 {
-                    await device.SendVibrateCmd(rnd.NextDouble());
+                    if (IsVorze(device))
+                    {
+                        await device.SendVorzeA10CycloneCmd(Convert.ToUInt32(rnd.Next(101)), rnd.Next(2) == 0 ? true : false);
+                    } else
+                    {
+                        await device.SendVibrateCmd(rnd.NextDouble());
+                    }
                 }
-                catch (ButtplugDeviceException)
+                catch (ButtplugDeviceException e)
                 {
-                    Console.WriteLine("Device disconnected.");
+                    Console.WriteLine($"Device error: {e}");
                     device = await AttemptReconnect(client, device);
                 }
                 catch (Exception e)
@@ -286,7 +296,7 @@ namespace skybutt
             fs.Seek(0, SeekOrigin.End);
 
             // Watch the file
-            double currentSetting = 0;
+            VibrateStatus currentSetting = VibrateStatus.Stopped();
             using (var sr = new StreamReader(fs))
             {
                 while (true)
@@ -310,12 +320,13 @@ namespace skybutt
                                 }
                                 else if (vl is VibrateStop)
                                 {
-                                    await device.SendVibrateCmd(0);
-                                    currentSetting = 0;
+                                    await HandleVibrateStop(device);
+                                    currentSetting = VibrateStatus.Stopped();
                                 }
                             }
-                            catch (ButtplugDeviceException)
+                            catch (ButtplugDeviceException e)
                             {
+                                Console.WriteLine(e);
                                 Console.WriteLine("Device disconnected.");
                                 device = await AttemptReconnect(client, device);
                             }
@@ -337,16 +348,39 @@ namespace skybutt
             //wh.Close();
         }
 
-        private static async Task<double> HandleVibrateStart(ButtplugClientDevice device, VibrateStart vs, double currentSetting)
+        private static async Task<VibrateStatus> HandleVibrateStart(ButtplugClientDevice device, VibrateStart vs, VibrateStatus status)
         {
-            await device.SendVibrateCmd(vs.strength);
-            // TODO handle intervals
-            return await vs.time.MatchAsync(async time =>
-                {
-                    await Task.Delay(time);
-                    await device.SendVibrateCmd(currentSetting);
-                    return currentSetting;
-                }, () => vs.strength);
+            if (IsVorze(device))
+            {
+                await device.SendVorzeA10CycloneCmd(Convert.ToUInt32(vs.strength * 100), !status.direction);
+                return await vs.time.MatchAsync(async time =>
+                    {
+                        await Task.Delay(time);
+                        await device.SendVorzeA10CycloneCmd(Convert.ToUInt32(status.strength * 100), status.direction);
+                        return status;
+                    }, () => new VibrateStatus(vs.strength, !status.direction));
+            }
+            else
+            {
+                await device.SendVibrateCmd(vs.strength);
+                // TODO handle intervals
+                return await vs.time.MatchAsync(async time =>
+                    {
+                        await Task.Delay(time);
+                        await device.SendVibrateCmd(status.strength);
+                        return status;
+                    }, () => new VibrateStatus(vs.strength, false));
+            }
+        }
+
+        private static bool IsVorze(ButtplugClientDevice device)
+        {
+            return device.AllowedMessages.ContainsKey(typeof(VorzeA10CycloneCmd));
+        }
+
+        private static async Task HandleVibrateStop(ButtplugClientDevice device)
+        {
+            await device.StopDeviceCmd();
         }
 
         static Either<Exception, VibrateCommand> ParseVibrateLine(string s)
@@ -373,6 +407,23 @@ namespace skybutt
                 return Right<VibrateCommand>(new VibrateStop());
             else
                 return Right<VibrateCommand>(new VibrateNone());
+        }
+
+        class VibrateStatus
+        {
+            public double strength;
+            public bool direction;
+
+            public VibrateStatus(double strength, bool direction)
+            {
+                this.strength = strength;
+                this.direction = direction;
+            }
+
+            public static VibrateStatus Stopped()
+            {
+                return new VibrateStatus(0, true);
+            }
         }
 
         interface VibrateCommand {}
