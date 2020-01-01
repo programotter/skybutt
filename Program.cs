@@ -130,29 +130,49 @@ namespace skybutt
                     Console.WriteLine($"{dev.Index}. {dev.Name}");
                     options.Add(dev.Index);
                 }
-                uint deviceChoice;
+                uint vaginalDeviceChoice;
                 if (options.Length() == 1)
                 {
-                    deviceChoice = client.Devices.Head().Index;
+                    vaginalDeviceChoice = client.Devices.Head().Index;
                 } else
                 {
-                    Console.WriteLine("Choose a device: ");
-                    if (!uint.TryParse(Console.ReadLine(), out deviceChoice) ||
-                        !options.Contains(deviceChoice))
+                    Console.WriteLine("Choose vaginal device: ");
+                    if (!uint.TryParse(Console.ReadLine(), out vaginalDeviceChoice) ||
+                        !options.Contains(vaginalDeviceChoice))
+                    {
+                        Console.WriteLine("Invalid choice");
+                        return;
+                    }
+                }
+                uint analDeviceChoice;
+                if (options.Length() == 1)
+                {
+                    analDeviceChoice = client.Devices.Head().Index;
+                } else
+                {
+                    Console.WriteLine("Choose anal device: ");
+                    if (!uint.TryParse(Console.ReadLine(), out analDeviceChoice) ||
+                        !options.Contains(analDeviceChoice))
                     {
                         Console.WriteLine("Invalid choice");
                         return;
                     }
                 }
 
-                var device = client.Devices.First(dev => dev.Index == deviceChoice);
-
-                foreach (var m in device.AllowedMessages)
+                var vaginalDevice = client.Devices.First(dev => dev.Index == vaginalDeviceChoice);
+                foreach (var m in vaginalDevice.AllowedMessages)
                 {
                     Console.WriteLine($"Device message: {m.Key} -> {m.Value}");
                 }
+
+                var analDevice = client.Devices.First(dev => dev.Index == analDeviceChoice);
+                foreach (var m in analDevice.AllowedMessages)
+                {
+                    Console.WriteLine($"Device message: {m.Key} -> {m.Value}");
+                }
+
                 Console.WriteLine("Watching Controller Rumble log file");
-                await WatchLogFileAsync(logFile, client, device);
+                await WatchLogFileAsync(logFile, client, vaginalDevice, analDevice);
             }
 
             async Task ControlDeviceRandom()
@@ -284,7 +304,7 @@ namespace skybutt
                 });
         }
 
-        static async Task WatchLogFileAsync(string filename, ButtplugClient client, ButtplugClientDevice device)
+        static async Task WatchLogFileAsync(string filename, ButtplugClient client, ButtplugClientDevice vaginalDevice, ButtplugClientDevice analDevice)
         {
             var wh = new AutoResetEvent(false);
             var fsw = new FileSystemWatcher(".");
@@ -306,36 +326,42 @@ namespace skybutt
                         fs.Seek(0, SeekOrigin.Begin);
 
                     string s = sr.ReadLine();
-                    if (s != null && (s.Contains("JNVaginal") || s.Contains("JNAnal")))
+                    if (s != null)
                     {
-                        Either<Exception, VibrateCommand> vlOrE = ParseVibrateLine(s);
-                        Console.WriteLine("[RumbleLog] " + vlOrE);
-                        await vlOrE.Match(async vl =>
+                        bool isAnal = s.Contains("JNAnal");
+                        bool isVaginal = s.Contains("JNVaginal");
+                        if (isAnal || isVaginal)
                         {
-                            try
+                            var deviceToSendTo = isAnal ? analDevice : vaginalDevice;
+                            Either<Exception, VibrateCommand> vlOrE = ParseVibrateLine(s);
+                            Console.WriteLine("[RumbleLog] " + vlOrE);
+                            await vlOrE.Match(async vl =>
                             {
-                                if (vl is VibrateStart)
+                                try
                                 {
-                                    currentSetting = await HandleVibrateStart(device, vl as VibrateStart, currentSetting);
+                                    if (vl is VibrateStart)
+                                    {
+                                        currentSetting = await HandleVibrateStart(deviceToSendTo, vl as VibrateStart, currentSetting);
+                                    }
+                                    else if (vl is VibrateStop)
+                                    {
+                                        await HandleVibrateStop(deviceToSendTo);
+                                        currentSetting = VibrateStatus.Stopped();
+                                    }
                                 }
-                                else if (vl is VibrateStop)
+                                catch (ButtplugDeviceException e)
                                 {
-                                    await HandleVibrateStop(device);
-                                    currentSetting = VibrateStatus.Stopped();
+                                    Console.WriteLine(e);
+                                    Console.WriteLine("Device disconnected.");
+                                    deviceToSendTo = await AttemptReconnect(client, deviceToSendTo);
                                 }
-                            }
-                            catch (ButtplugDeviceException e)
-                            {
-                                Console.WriteLine(e);
-                                Console.WriteLine("Device disconnected.");
-                                device = await AttemptReconnect(client, device);
-                            }
-                            catch (Exception e)
-                            {
-                                Console.WriteLine("Unknown exception, attempting reconnect anyway. Exception: " + e);
-                                device = await AttemptReconnect(client, device);
-                            }
-                        }, async e => Console.WriteLine(e));
+                                catch (Exception e)
+                                {
+                                    Console.WriteLine("Unknown exception, attempting reconnect anyway. Exception: " + e);
+                                    deviceToSendTo = await AttemptReconnect(client, deviceToSendTo);
+                                }
+                            }, async e => Console.WriteLine(e));
+                        }
                     }
                     else
                     {
@@ -352,13 +378,14 @@ namespace skybutt
         {
             if (IsVorze(device))
             {
-                await device.SendVorzeA10CycloneCmd(Convert.ToUInt32(vs.strength * 100), !status.direction);
+                var newDirection = random(2) == 0 ? true : false;
+                await device.SendVorzeA10CycloneCmd(Convert.ToUInt32(vs.strength * 100), newDirection);
                 return await vs.time.MatchAsync(async time =>
                     {
                         await Task.Delay(time);
-                        await device.SendVorzeA10CycloneCmd(Convert.ToUInt32(status.strength * 100), status.direction);
+                        await device.SendVorzeA10CycloneCmd(StrengthToVorzeRotation(status.strength), status.direction);
                         return status;
-                    }, () => new VibrateStatus(vs.strength, !status.direction));
+                    }, () => new VibrateStatus(vs.strength, newDirection));
             }
             else
             {
@@ -376,6 +403,11 @@ namespace skybutt
         private static bool IsVorze(ButtplugClientDevice device)
         {
             return device.AllowedMessages.ContainsKey(typeof(VorzeA10CycloneCmd));
+        }
+
+        private static UInt32 StrengthToVorzeRotation(double strength)
+        {
+            return Convert.ToUInt32(Math.Pow(strength, 2) * 80);
         }
 
         private static async Task HandleVibrateStop(ButtplugClientDevice device)
