@@ -41,8 +41,8 @@ namespace skybutt
             // As usual, we start off with our connector setup. We really don't
             // need access to the connector this time, so we can just pass the
             // created connector directly to the client.
-            //var client = new ButtplugClient("skybutt Client",
-            //    new ButtplugEmbeddedConnector("Example Server"));
+            //var client = new ButtplugClient("skybutt client",
+            //    new ButtplugEmbeddedConnector("skybutt server"));
 
             // If you want to use a websocket client and talk to a websocket
             // server instead, uncomment the following line and comment the one
@@ -258,7 +258,7 @@ namespace skybutt
             var rnd = new Random();
             while (true)
             {
-                var delay = rnd.NextDouble() * 0.5 + rnd.NextDouble() * rnd.NextDouble();
+                var delay = rnd.NextDouble() * 0.5 + rnd.NextDouble() * rnd.NextDouble() * 10.0;
                 try
                 {
                     if (IsVorze(device))
@@ -266,7 +266,9 @@ namespace skybutt
                         await device.SendVorzeA10CycloneCmd(Convert.ToUInt32(rnd.Next(101)), rnd.Next(2) == 0 ? true : false);
                     } else
                     {
-                        await device.SendVibrateCmd(rnd.NextDouble());
+                        bool shouldStop = rnd.NextDouble() < 0.35;
+                        double strength = shouldStop ? 0 : rnd.NextDouble();
+                        await device.SendVibrateCmd(strength);
                     }
                 }
                 catch (ButtplugDeviceException e)
